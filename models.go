@@ -19,3 +19,19 @@ type ProviderGroup struct {
 	TINValue            string `json:"tin_value"`
 	TINBusinessName     string `json:"tin_business_name"`
 }
+
+type ProviderPrice struct {
+	ID              int      `json:"id"`
+	BillingCode     string   `json:"billing_code"`
+	BillingCodeType string   `json:"billing_code_type"`
+	PlanIDs         string   `json:"plan_ids"`
+	Procedure       string   `json:"procedure"`
+	NPI             string   `json:"npi"`
+	TINValue        string   `json:"tin_value"`
+	TINBusinessName string   `json:"tin_business_name"`
+	NegotiatedType  string   `json:"negotiated_type"`
+	NegotiatedRate  *float64 `json:"negotiated_rate"`
+	BillingClass    string   `json:"billing_class"`
+	Setting         string   `json:"setting"`
+	ExpirationDate  string   `json:"expiration_date"`
+}

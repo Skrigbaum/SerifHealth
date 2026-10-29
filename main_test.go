@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestBuildProviderSearchQuery(t *testing.T) {
 	query, args := buildProviderSearchQuery("tin_value", "11-3471596")
@@ -25,5 +28,12 @@ func TestBuildBillingCodeQuery(t *testing.T) {
 	}
 	if args[0] != "10006" {
 		t.Fatalf("expected exact code, got %v", args[0])
+	}
+}
+
+func TestBuildInitialNetworkItemsQuery(t *testing.T) {
+	query := buildInitialNetworkItemsQuery()
+	if !strings.Contains(query, "ORDER BY id ASC LIMIT 10") {
+		t.Fatalf("expected the initial query to return the first 10 rows in ID order, got %q", query)
 	}
 }

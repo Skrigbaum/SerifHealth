@@ -88,8 +88,7 @@ h1 {
 }
 
 .field-group input,
-.field-group select,
-.filter-box input {
+.field-group select {
   width: 100%;
   border: 1px solid #d3dceb;
   background: #fff;
@@ -99,8 +98,7 @@ h1 {
 }
 
 .field-group input:focus,
-.field-group select:focus,
-.filter-box input:focus {
+.field-group select:focus {
   outline: 3px solid rgba(79, 70, 229, 0.18);
   border-color: #4f46e5;
 }
@@ -121,19 +119,6 @@ h1 {
   cursor: not-allowed;
 }
 
-.table-toolbar {
-  margin-top: 18px;
-}
-
-.filter-box {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: #4b5563;
-}
-
 .error-banner {
   margin-top: 18px;
   padding: 12px 14px;
@@ -150,6 +135,36 @@ h1 {
   border: 1px solid #e5e7eb;
 }
 
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 2px;
+  color: #4b5563;
+  font-size: 0.9rem;
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pagination button {
+  padding: 7px 10px;
+  border: 1px solid #d3dceb;
+  border-radius: 6px;
+  background: #fff;
+  color: #1f2937;
+  cursor: pointer;
+}
+
+.pagination button:disabled {
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -162,6 +177,43 @@ td {
   border-bottom: 1px solid #edf1f7;
   text-align: left;
   vertical-align: top;
+}
+
+th[data-column="expiration_date"],
+td[data-column="expiration_date"],
+th[data-column="npi"],
+td[data-column="npi"],
+th[data-column="tin_value"],
+td[data-column="tin_value"] {
+  min-width: 120px;
+  white-space: nowrap;
+}
+
+.clamped-cell-value {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  line-clamp: 5;
+  overflow-wrap: anywhere;
+}
+
+th[data-column="npi"],
+td[data-column="npi"] {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+td[data-column="plan_ids"] {
+  min-width: 180px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+
+th[data-column="negotiated_rate"],
+td[data-column="negotiated_rate"] {
+  font-weight: 700;
 }
 
 th {
@@ -204,5 +256,10 @@ tbody tr:hover {
   td {
     padding: 10px 12px;
     font-size: 0.9rem;
+  }
+
+  .pagination {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

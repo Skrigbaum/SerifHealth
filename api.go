@@ -4,26 +4,41 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
-func setCORSHeaders(w http.ResponseWriter) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+const providerPricePageSize = 50
+
+func withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func writeError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": message})
 }
 
 func rootHandler(w http.ResponseWriter, r *http.Request) {
-	setCORSHeaders(w)
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"service": "SerifHealth API",
 		"endpoints": []string{
 			"/health",
@@ -31,72 +46,55 @@ func rootHandler(w http.ResponseWriter, r *http.Request) {
 			"/api/search/billing-code-types",
 			"/api/search/provider?npi=1396747861",
 			"/api/search/provider?tin_value=11-3471596",
+			"/api/search/provider-price?billing_code=10006",
 			"/api/search/provider?tin_business_name=Pathologists",
 		},
 	})
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
-	setCORSHeaders(w)
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func searchBillingCodeHandler(w http.ResponseWriter, r *http.Request, dbPath string) {
-	setCORSHeaders(w)
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
 	code := strings.TrimSpace(r.URL.Query().Get("billing_code"))
 	billingCodeType := strings.TrimSpace(r.URL.Query().Get("billing_code_type"))
+
+	var items []NetworkItem
+	var err error
 	if code == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "billing_code query parameter is required"})
-		return
+		items, err = queryNetworkItems(dbPath, buildInitialNetworkItemsQuery())
+	} else {
+		query, args := buildBillingCodeQuery(code, billingCodeType)
+		items, err = queryNetworkItems(dbPath, query, args...)
 	}
-
-	query, args := buildBillingCodeQuery(code, billingCodeType)
-	items, err := queryNetworkItems(dbPath, query, args...)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"billing_code":      code,
 		"billing_code_type": billingCodeType,
-		"count":            len(items),
-		"items":            items,
+		"count":             len(items),
+		"items":             items,
 	})
 }
 
-func listBillingCodeTypesHandler(w http.ResponseWriter, r *http.Request, dbPath string) {
-	setCORSHeaders(w)
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
+func buildInitialNetworkItemsQuery() string {
+	return "SELECT id, reporting_entity_id, negotiation_arrangement, name, billing_code_type, billing_code_type_version, billing_code, description FROM network_item ORDER BY id ASC LIMIT 10"
+}
 
+func listBillingCodeTypesHandler(w http.ResponseWriter, r *http.Request, dbPath string) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	defer db.Close()
 
 	rows, err := db.Query("SELECT DISTINCT billing_code_type FROM network_item WHERE billing_code_type IS NOT NULL AND billing_code_type != '' ORDER BY billing_code_type ASC")
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	defer rows.Close()
@@ -105,43 +103,90 @@ func listBillingCodeTypesHandler(w http.ResponseWriter, r *http.Request, dbPath 
 	for rows.Next() {
 		var codeType string
 		if err := rows.Scan(&codeType); err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		values = append(values, codeType)
 	}
-	json.NewEncoder(w).Encode(map[string]any{"count": len(values), "types": values})
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"count": len(values), "types": values})
 }
 
 func searchProviderHandler(w http.ResponseWriter, r *http.Request, dbPath string) {
-	setCORSHeaders(w)
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-
 	field, value := detectProviderField(r)
 	if field == "" || value == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "provide one of: npi, tin_value, tin_business_name, or tin_buisness_name"})
+		writeError(w, http.StatusBadRequest, "provide one of: npi, tin_value, tin_business_name, or tin_buisness_name")
 		return
 	}
 
 	query, args := buildProviderSearchQuery(field, value)
 	items, err := queryProviderGroups(dbPath, query, args...)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"field": field,
 		"value": value,
 		"count": len(items),
 		"items": items,
+	})
+}
+
+func searchProviderPriceHandler(w http.ResponseWriter, r *http.Request, dbPath string) {
+	values := r.URL.Query()
+	billingCode := strings.TrimSpace(values.Get("billing_code"))
+	billingCodeType := strings.TrimSpace(values.Get("billing_code_type"))
+	planID := strings.TrimSpace(values.Get("plan_id"))
+	npi := strings.TrimSpace(values.Get("npi"))
+	tinValue := strings.TrimSpace(values.Get("tin_value"))
+	providerIdentifier := strings.TrimSpace(values.Get("provider_identifier"))
+
+	if billingCode == "" {
+		writeError(w, http.StatusBadRequest, "billing_code is required")
+		return
+	}
+	if providerIdentifier != "" {
+		isNPI := len(providerIdentifier) == 10
+		for _, digit := range providerIdentifier {
+			if digit < '0' || digit > '9' {
+				isNPI = false
+				break
+			}
+		}
+		if isNPI {
+			npi, tinValue = providerIdentifier, ""
+		} else {
+			npi, tinValue = "", providerIdentifier
+		}
+	}
+	page, err := strconv.Atoi(values.Get("page"))
+	if err != nil || page < 1 {
+		page = 1
+	}
+	sortOrder := strings.ToUpper(values.Get("sort_order"))
+	if sortOrder != "DESC" {
+		sortOrder = "ASC"
+	}
+
+	items, total, err := queryProviderPrices(dbPath, billingCode, billingCodeType, planID, npi, tinValue, page, sortOrder)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"search_type": "provider_price",
+		"count":       len(items),
+		"total":       total,
+		"page":        page,
+		"page_size":   providerPricePageSize,
+		"sort_order":  sortOrder,
+		"items":       items,
 	})
 }
 
@@ -276,6 +321,98 @@ func queryProviderGroups(dbPath, query string, args ...any) ([]ProviderGroup, er
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func queryProviderPrices(dbPath, billingCode, billingCodeType, planID, npi, tinValue string, page int, sortOrder string) ([]ProviderPrice, int, error) {
+	from := `
+		FROM negotiated_price np
+		JOIN network_item ni ON ni.id = np.network_item_id
+		CROSS JOIN json_each(np.provider_references) AS rate_provider
+		JOIN provider_group pg ON pg.provider_reference_id = CAST(rate_provider.value AS INTEGER)
+		WHERE ni.billing_code = ?`
+	args := []any{billingCode}
+
+	if billingCodeType != "" {
+		from += " AND ni.billing_code_type = ?"
+		args = append(args, billingCodeType)
+	}
+	if planID != "" {
+		from += ` AND EXISTS (
+			SELECT 1
+			FROM reporting_plan_in_network_file rpif
+			JOIN reporting_plan rp ON rp.id = rpif.reporting_plan_id
+			WHERE rpif.in_network_file_id = ni.in_network_file_id AND rp.plan_id = ?
+		)`
+		args = append(args, planID)
+	}
+	if npi != "" {
+		from += " AND EXISTS (SELECT 1 FROM json_each(pg.npi) AS provider_npi WHERE CAST(provider_npi.value AS TEXT) = ?)"
+		args = append(args, npi)
+	}
+	if tinValue != "" {
+		from += " AND REPLACE(pg.tin_value, '-', '') = ?"
+		args = append(args, strings.ReplaceAll(tinValue, "-", ""))
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer db.Close()
+
+	var total int
+	if err := db.QueryRow("SELECT COUNT(*) "+from, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	query := `
+		SELECT np.id, ni.billing_code, COALESCE(ni.billing_code_type, ''),
+		       COALESCE((SELECT group_concat(DISTINCT rp.plan_id)
+		                 FROM reporting_plan_in_network_file rpif
+		                 JOIN reporting_plan rp ON rp.id = rpif.reporting_plan_id
+		                 WHERE rpif.in_network_file_id = ni.in_network_file_id
+		                   AND (? = '' OR rp.plan_id = ?)), ''),
+		       COALESCE(ni.name, ''),
+		       COALESCE((SELECT group_concat(value, ', ') FROM json_each(pg.npi)), ''),
+		       COALESCE(pg.tin_value, ''), COALESCE(pg.tin_business_name, ''),
+		       COALESCE(np.negotiated_type, ''), np.negotiated_rate,
+		       COALESCE(np.billing_class, ''), COALESCE(np.setting, ''), COALESCE(np.expiration_date, '') ` + from +
+		" ORDER BY np.negotiated_rate IS NULL, np.negotiated_rate " + sortOrder + ", ni.id, pg.tin_business_name, np.id, CAST(rate_provider.value AS INTEGER), pg.id LIMIT ? OFFSET ?"
+	queryArgs := append([]any{planID, planID}, args...)
+	pageArgs := append(queryArgs, providerPricePageSize, (page-1)*providerPricePageSize)
+	rows, err := db.Query(query, pageArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := make([]ProviderPrice, 0)
+	for rows.Next() {
+		var item ProviderPrice
+		var rate sql.NullFloat64
+		if err := rows.Scan(
+			&item.ID,
+			&item.BillingCode,
+			&item.BillingCodeType,
+			&item.PlanIDs,
+			&item.Procedure,
+			&item.NPI,
+			&item.TINValue,
+			&item.TINBusinessName,
+			&item.NegotiatedType,
+			&rate,
+			&item.BillingClass,
+			&item.Setting,
+			&item.ExpirationDate,
+		); err != nil {
+			return nil, 0, err
+		}
+		if rate.Valid {
+			item.NegotiatedRate = &rate.Float64
+		}
+		items = append(items, item)
+	}
+	return items, total, rows.Err()
 }
 
 func nullString(v sql.NullString) string {

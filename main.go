@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -27,14 +26,13 @@ func main() {
 	mux.HandleFunc("/api/search/provider", func(w http.ResponseWriter, r *http.Request) {
 		searchProviderHandler(w, r, dbPath)
 	})
+	mux.HandleFunc("/api/search/provider-price", func(w http.ResponseWriter, r *http.Request) {
+		searchProviderPriceHandler(w, r, dbPath)
+	})
 	mux.HandleFunc("/api/search/billing-code-types", func(w http.ResponseWriter, r *http.Request) {
 		listBillingCodeTypesHandler(w, r, dbPath)
 	})
 
-	fmt.Println("Listening on :8080")
-	if err := http.ListenAndServe(":8080", mux); err != nil {
-		log.Fatalf("server failed: %v", err)
-	}
+	log.Println("Listening on :8080")
+	log.Fatal(http.ListenAndServe(":8080", withCORS(mux)))
 }
-
-

@@ -1,0 +1,3 @@
+#DB Related
+*.db
+__pycache__
